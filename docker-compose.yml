@@ -1,0 +1,238 @@
+version: '3.8'
+
+# Запуск:
+#   docker compose up -d                          -> replica set rs0 + одноразовый mongo-init
+#   docker compose --profile sharding up -d       -> + config-server, 4 шарда, mongos (раздел 8)
+#   docker compose --profile monitoring up -d     -> + exporter, prometheus, grafana (раздел 12)
+# Паролі беруться з файлу .env (шаблон: .env.example).
+# Кожен сервіс має свій унікальний порт (внутрішній = зовнішній).
+
+services:
+  # ========== REPLICA SET ==========
+  mongo-primary:
+    image: mongo:7.0
+    container_name: mongo-primary
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017", "--oplogSize", "1024"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - primary_data:/data/db
+    networks:
+      - mongo-cluster
+
+  mongo-secondary1:
+    image: mongo:7.0
+    container_name: mongo-secondary1
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27018"]
+    ports:
+      - "27018:27018"
+    volumes:
+      - secondary1_data:/data/db
+    depends_on:
+      - mongo-primary
+    networks:
+      - mongo-cluster
+
+  mongo-secondary2:
+    image: mongo:7.0
+    container_name: mongo-secondary2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27019"]
+    ports:
+      - "27019:27019"
+    volumes:
+      - secondary2_data:/data/db
+    depends_on:
+      - mongo-primary
+    networks:
+      - mongo-cluster
+
+  # Одноразова ініціалізація replica set і користувачів.
+  # Можна запускати повторно: docker compose run --rm mongo-init
+  mongo-init:
+    image: mongo:7.0
+    container_name: mongo-init
+    restart: "no"
+    entrypoint: ["mongosh", "--nodb", "--quiet", "--file", "/scripts/init-replica.js"]
+    environment:
+      MONGO_ADMIN_USER: ${MONGO_ADMIN_USER:-admin}
+      MONGO_ADMIN_PASSWORD: ${MONGO_ADMIN_PASSWORD:?Задайте MONGO_ADMIN_PASSWORD в .env}
+      MONGO_APP_USER: ${MONGO_APP_USER:-app_user}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Задайте MONGO_APP_PASSWORD в .env}
+      MONGO_DB: ${MONGO_DB:-eventhub}
+      MONGO_TEST_DB: ${MONGO_TEST_DB:-eventhub_test}
+    volumes:
+      - ./scripts/init-replica.js:/scripts/init-replica.js:ro
+    depends_on:
+      - mongo-primary
+      - mongo-secondary1
+      - mongo-secondary2
+    networks:
+      - mongo-cluster
+
+  # ========== SHARDING CONFIG (profile: sharding) ==========
+  config-server:
+    image: mongo:7.0
+    container_name: config-server
+    profiles: ["sharding"]
+    command: ["mongod", "--configsvr", "--replSet", "configReplSet", "--bind_ip_all", "--port", "27020"]
+    ports:
+      - "27020:27020"
+    volumes:
+      - config_data:/data/configdb
+    networks:
+      - mongo-cluster
+
+  shard1-node1:
+    image: mongo:7.0
+    container_name: shard1-node1
+    profiles: ["sharding"]
+    command: ["mongod", "--shardsvr", "--replSet", "shard1ReplSet", "--bind_ip_all", "--port", "27021"]
+    volumes:
+      - shard1_data1:/data/db
+    networks:
+      - mongo-cluster
+
+  shard1-node2:
+    image: mongo:7.0
+    container_name: shard1-node2
+    profiles: ["sharding"]
+    command: ["mongod", "--shardsvr", "--replSet", "shard1ReplSet", "--bind_ip_all", "--port", "27022"]
+    volumes:
+      - shard1_data2:/data/db
+    networks:
+      - mongo-cluster
+
+  shard2-node1:
+    image: mongo:7.0
+    container_name: shard2-node1
+    profiles: ["sharding"]
+    command: ["mongod", "--shardsvr", "--replSet", "shard2ReplSet", "--bind_ip_all", "--port", "27023"]
+    volumes:
+      - shard2_data1:/data/db
+    networks:
+      - mongo-cluster
+
+  shard2-node2:
+    image: mongo:7.0
+    container_name: shard2-node2
+    profiles: ["sharding"]
+    command: ["mongod", "--shardsvr", "--replSet", "shard2ReplSet", "--bind_ip_all", "--port", "27024"]
+    volumes:
+      - shard2_data2:/data/db
+    networks:
+      - mongo-cluster
+
+  mongos-router:
+    image: mongo:7.0
+    container_name: mongos-router
+    profiles: ["sharding"]
+    command: ["mongos", "--configdb", "configReplSet/config-server:27020", "--bind_ip_all", "--port", "27025"]
+    ports:
+      - "27025:27025"
+    depends_on:
+      - config-server
+      - shard1-node1
+      - shard1-node2
+      - shard2-node1
+      - shard2-node2
+    networks:
+      - mongo-cluster
+
+  # Одноразова ініціалізація шардованого кластера (розділ 8).
+  # Повторний запуск: docker compose --profile sharding run --rm mongo-init-sharding
+  mongo-init-sharding:
+    image: mongo:7.0
+    container_name: mongo-init-sharding
+    profiles: ["sharding"]
+    restart: "no"
+    entrypoint: ["mongosh", "--nodb", "--quiet", "--file", "/scripts/init-sharding.js"]
+    environment:
+      MONGO_ADMIN_USER: ${MONGO_ADMIN_USER:-admin}
+      MONGO_ADMIN_PASSWORD: ${MONGO_ADMIN_PASSWORD:?Задайте MONGO_ADMIN_PASSWORD в .env}
+      MONGO_APP_USER: ${MONGO_APP_USER:-app_user}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Задайте MONGO_APP_PASSWORD в .env}
+      MONGO_DB: ${MONGO_DB:-eventhub}
+      MONGO_TEST_DB: ${MONGO_TEST_DB:-eventhub_test}
+    volumes:
+      - ./scripts/init-sharding.js:/scripts/init-sharding.js:ro
+    depends_on:
+      - mongos-router
+    networks:
+      - mongo-cluster
+
+  # ========== API (profile: api) — розділ 14 ==========
+  # docker compose --profile api up -d --build   ->  http://localhost:8000/docs
+  api:
+    build: .
+    image: eventhub-api:latest
+    container_name: eventhub-api
+    profiles: ["api"]
+    env_file: .env
+    environment:
+      # усередині Docker-мережі імена вузлів резолвляться без файлу hosts
+      MONGO_HOSTS: mongo-primary:27017,mongo-secondary1:27018,mongo-secondary2:27019
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo-primary
+      - mongo-secondary1
+      - mongo-secondary2
+    networks:
+      - mongo-cluster
+
+  # ========== MONITORING (profile: monitoring) ==========
+  # TODO(розділ 12): образ bitnami/mongodb-exporter:latest більше не публікується,
+  # а файлу ./prometheus.yml ще немає.
+  mongodb-exporter:
+    image: bitnami/mongodb-exporter:latest
+    container_name: mongodb-exporter
+    profiles: ["monitoring"]
+    environment:
+      - MONGODB_URI=mongodb://mongo-primary:27017/admin
+    ports:
+      - "9216:9216"
+    depends_on:
+      - mongo-primary
+    networks:
+      - mongo-cluster
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - mongo-cluster
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    profiles: ["monitoring"]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - mongo-cluster
+
+volumes:
+  primary_data:
+  secondary1_data:
+  secondary2_data:
+  config_data:
+  shard1_data1:
+  shard1_data2:
+  shard2_data1:
+  shard2_data2:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  mongo-cluster:
+    driver: bridge

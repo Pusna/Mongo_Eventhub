@@ -1,0 +1,13 @@
+# k8s/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: eventhub
+spec:
+  selector:
+    app: mongodb
+  clusterIP: None
+  ports:
+  - port: 27017
+    targetPort: 27017

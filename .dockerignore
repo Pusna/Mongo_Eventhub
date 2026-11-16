@@ -1,0 +1,15 @@
+.env
+.git
+.idea
+venv
+backups
+tests
+docs
+k8s
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+mongodb_monitor.log
+repl.txt
