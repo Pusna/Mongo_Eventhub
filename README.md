@@ -9,7 +9,6 @@
 - MongoDB 7.0 (replica set із 3 вузлів) у Docker та Docker Compose
 - Python 3.11: PyMongo, FastAPI, pydantic-settings
 - pytest та pytest-cov для тестів
-- Kubernetes-маніфести (конфігурація за завданням)
 ---
  
 ## 🏗️ Архітектура та вимоги
