@@ -66,16 +66,16 @@ pip install -r requirements.txt
  
 ### 2️⃣ Файл `.env`
  
-Скопіюйте шаблон і замініть паролі `change_me_*`:
+Для локального запуску значення за замовчуванням підходять. За бажанням замініть паролі `change_me_*` на свої:
  
 ```
 copy .env.example .env
 ```
  
-- `MONGO_ADMIN_PASSWORD`, `MONGO_APP_PASSWORD`: обов'язково
+- `MONGO_ADMIN_PASSWORD`, `MONGO_APP_PASSWORD`: паролі користувачів MongoDB
 - `GRAFANA_PASSWORD`: лише для профілю `monitoring`
 - `ATLAS_URI`: необов'язково, для розділу 11 (розкоментуйте рядок і впишіть свій рядок підключення)
-Решта значень у шаблоні підходить для локального запуску. Інші налаштування (`MONGO_TEST_DB`, ключі Atlas API, SMTP, Slack, `CORS_ORIGINS` тощо) мають значення за замовчуванням в `app/config.py`. Файл `.env` не потрапляє в git.
+
  
 ### 3️⃣ Файл hosts
  
